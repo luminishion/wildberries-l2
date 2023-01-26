@@ -37,76 +37,27 @@ type Command struct {
 }
 
 type Shell struct {
-	stdin  io.Reader
-	stdout io.Writer
+	stdin    io.Reader
+	stdout   io.Writer
+	handlers map[string]func(*Shell, Command)
 }
 
 func NewShell(stdin io.Reader, stdout io.Writer) *Shell {
 	s := &Shell{
 		stdin:  stdin,
 		stdout: stdout,
+		handlers: map[string]func(*Shell, Command){
+			"cd":   (*Shell).cd,
+			"pwd":  (*Shell).pwd,
+			"echo": (*Shell).echo,
+			"kill": (*Shell).kill,
+			"exec": (*Shell).exec,
+			"ps":   (*Shell).ps,
+			"nc":   (*Shell).nc,
+		},
 	}
 
 	return s
-}
-
-func (s *Shell) runBatch(batch []Command) {
-	for _, cmd := range batch {
-		s.runCmd(cmd)
-	}
-}
-
-func (s *Shell) connectBatch(batch []Command) {
-	if len(batch) == 0 {
-		return
-	}
-
-	batch[0].stdin = s.stdin
-
-	for i := 1; i < len(batch); i++ {
-		var bf bytes.Buffer
-
-		batch[i-1].stdout = &bf
-		batch[i].stdin = &bf
-	}
-
-	batch[len(batch)-1].stdout = s.stdout
-
-	s.runBatch(batch)
-}
-
-func (s *Shell) makeBatch(str string) {
-	cmds := strings.FieldsFunc(str, func(i rune) bool {
-		return i == '|'
-	})
-
-	batch := make([]Command, len(cmds))
-
-	for i, cmd := range cmds {
-		arr := strings.Fields(cmd)
-
-		var cmd Command
-		cmd.cmd = arr[0]
-
-		if len(arr) > 1 {
-			cmd.args = arr[1:]
-		}
-
-		batch[i] = cmd
-	}
-
-	s.connectBatch(batch)
-}
-
-func (s *Shell) Run() error {
-	scanner := bufio.NewScanner(s.stdin)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		s.makeBatch(line)
-	}
-
-	return scanner.Err()
 }
 
 func (s *Shell) cd(c Command) {
@@ -211,24 +162,71 @@ func (s *Shell) nc(c Command) {
 }
 
 func (s *Shell) runCmd(cmd Command) {
-	switch cmd.cmd {
-	case "cd":
-		s.cd(cmd)
-	case "pwd":
-		s.pwd(cmd)
-	case "echo":
-		s.echo(cmd)
-	case "kill":
-		s.kill(cmd)
-	case "ps":
-		s.ps(cmd)
-	case "exec":
-		s.exec(cmd)
-	case "nc":
-		s.nc(cmd)
-	default:
-		fmt.Fprintln(s.stdout, "command not found")
+	if fn, ok := s.handlers[cmd.cmd]; ok {
+		fn(s, cmd)
+		return
 	}
+
+	fmt.Fprintln(s.stdout, "command not found")
+}
+
+func (s *Shell) runBatch(batch []Command) {
+	for _, cmd := range batch {
+		s.runCmd(cmd)
+	}
+}
+
+func (s *Shell) connectBatch(batch []Command) {
+	if len(batch) == 0 {
+		return
+	}
+
+	batch[0].stdin = s.stdin
+
+	for i := 1; i < len(batch); i++ {
+		var bf bytes.Buffer
+
+		batch[i-1].stdout = &bf
+		batch[i].stdin = &bf
+	}
+
+	batch[len(batch)-1].stdout = s.stdout
+
+	s.runBatch(batch)
+}
+
+func (s *Shell) makeBatch(str string) {
+	cmds := strings.FieldsFunc(str, func(i rune) bool {
+		return i == '|'
+	})
+
+	batch := make([]Command, len(cmds))
+
+	for i, cmd := range cmds {
+		arr := strings.Fields(cmd)
+
+		var cmd Command
+		cmd.cmd = arr[0]
+
+		if len(arr) > 1 {
+			cmd.args = arr[1:]
+		}
+
+		batch[i] = cmd
+	}
+
+	s.connectBatch(batch)
+}
+
+func (s *Shell) Run() error {
+	scanner := bufio.NewScanner(s.stdin)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		s.makeBatch(line)
+	}
+
+	return scanner.Err()
 }
 
 func main() {
